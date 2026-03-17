@@ -36,6 +36,11 @@ function extractOriginFromUrl(value = "") {
     }
 }
 
+function isSafeHttpOrigin(value = "") {
+    const origin = extractOriginFromUrl(value);
+    return Boolean(origin && /^https?:\/\//i.test(origin));
+}
+
 function resolveBackendBaseUrl(req) {
     const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
     const proto = forwardedProto || req.protocol || "https";
@@ -50,6 +55,13 @@ function resolveBackendBaseUrl(req) {
 }
 
 function resolveFrontendBaseUrl(req) {
+    const requestedFrontendBase = normalizeUrl(
+        req.query?.frontendBaseUrl || req.query?.frontend || req.query?.redirectBase || ""
+    );
+    if (isSafeHttpOrigin(requestedFrontendBase)) {
+        return requestedFrontendBase;
+    }
+
     const configured = normalizeUrl(FRONTEND_BASE_URL);
     if (configured && !configured.includes("localhost")) {
         return configured;
