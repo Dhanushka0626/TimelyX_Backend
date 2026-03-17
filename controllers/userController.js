@@ -24,23 +24,88 @@ function escapeRegex(value = "") {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function createOAuthState(provider) {
-    return jwt.sign({ provider, type: "oauth_state" }, JWT_SECRET, { expiresIn: "10m" });
+function normalizeUrl(value = "") {
+    return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function extractOriginFromUrl(value = "") {
+    try {
+        return new URL(value).origin;
+    } catch {
+        return "";
+    }
+}
+
+function resolveBackendBaseUrl(req) {
+    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+    const proto = forwardedProto || req.protocol || "https";
+    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
+    const host = forwardedHost || req.get("host");
+
+    if (!host) {
+        return "http://localhost:3000";
+    }
+
+    return `${proto}://${host}`;
+}
+
+function resolveFrontendBaseUrl(req) {
+    const configured = normalizeUrl(FRONTEND_BASE_URL);
+    if (configured && !configured.includes("localhost")) {
+        return configured;
+    }
+
+    const requestOrigin = normalizeUrl(req.get("origin") || "");
+    if (requestOrigin) {
+        return requestOrigin;
+    }
+
+    const refererOrigin = extractOriginFromUrl(req.get("referer") || "");
+    if (refererOrigin) {
+        return normalizeUrl(refererOrigin);
+    }
+
+    return configured || "http://localhost:5173";
+}
+
+function resolveOAuthRedirectUri(req, provider) {
+    const configured = provider === "google"
+        ? normalizeUrl(GOOGLE_REDIRECT_URI)
+        : normalizeUrl(MICROSOFT_REDIRECT_URI);
+
+    if (configured && !configured.includes("localhost")) {
+        return configured;
+    }
+
+    const backendBase = resolveBackendBaseUrl(req);
+    return `${backendBase}/users/oauth/${provider}/callback`;
+}
+
+function createOAuthState(provider, frontendBaseUrl) {
+    return jwt.sign(
+        { provider, frontendBaseUrl: normalizeUrl(frontendBaseUrl), type: "oauth_state" },
+        JWT_SECRET,
+        { expiresIn: "10m" }
+    );
 }
 
 function verifyOAuthState(token, provider) {
     const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded?.type === "oauth_state" && decoded?.provider === provider;
+    if (decoded?.type !== "oauth_state" || decoded?.provider !== provider) {
+        return null;
+    }
+
+    return decoded;
 }
 
-function buildAuthErrorRedirect(message) {
+function buildAuthErrorRedirect(message, frontendBaseUrl = FRONTEND_BASE_URL) {
     const safe = encodeURIComponent(message || "Authentication failed");
-    return `${FRONTEND_BASE_URL}/login?oauthError=${safe}`;
+    return `${normalizeUrl(frontendBaseUrl)}/login?oauthError=${safe}`;
 }
 
-function buildAuthSuccessRedirect(token, role, username) {
+function buildAuthSuccessRedirect(token, role, username, frontendBaseUrl = FRONTEND_BASE_URL) {
     const params = new URLSearchParams({ token, role, username: username || "" });
-    return `${FRONTEND_BASE_URL}/oauth/callback?${params.toString()}`;
+    return `${normalizeUrl(frontendBaseUrl)}/oauth/callback?${params.toString()}`;
 }
 
 function createMailTransporter() {
@@ -745,10 +810,12 @@ export async function startGoogleOAuth(req, res) {
             return res.status(501).json({ message: "Google OAuth is not configured" });
         }
 
-        const state = createOAuthState("google");
+        const frontendBaseUrl = resolveFrontendBaseUrl(req);
+        const redirectUri = resolveOAuthRedirectUri(req, "google");
+        const state = createOAuthState("google", frontendBaseUrl);
         const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
         authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
-        authUrl.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
         authUrl.searchParams.set("response_type", "code");
         authUrl.searchParams.set("scope", "openid email profile");
         authUrl.searchParams.set("state", state);
@@ -770,9 +837,13 @@ export async function googleOAuthCallback(req, res) {
             return res.redirect(buildAuthErrorRedirect("Missing Google OAuth parameters"));
         }
 
-        if (!verifyOAuthState(state, "google")) {
+        const statePayload = verifyOAuthState(state, "google");
+        if (!statePayload) {
             return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
         }
+
+        const frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || resolveFrontendBaseUrl(req);
+        const redirectUri = resolveOAuthRedirectUri(req, "google");
 
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
             method: "POST",
@@ -781,19 +852,19 @@ export async function googleOAuthCallback(req, res) {
                 code: String(code),
                 client_id: GOOGLE_CLIENT_ID,
                 client_secret: GOOGLE_CLIENT_SECRET,
-                redirect_uri: GOOGLE_REDIRECT_URI,
+                redirect_uri: redirectUri,
                 grant_type: "authorization_code",
             }),
         });
 
         if (!tokenRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Google token exchange failed"));
+            return res.redirect(buildAuthErrorRedirect("Google token exchange failed", frontendBaseUrl));
         }
 
         const tokenData = await tokenRes.json();
         const accessToken = tokenData?.access_token;
         if (!accessToken) {
-            return res.redirect(buildAuthErrorRedirect("Google access token missing"));
+            return res.redirect(buildAuthErrorRedirect("Google access token missing", frontendBaseUrl));
         }
 
         const userRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
@@ -801,7 +872,7 @@ export async function googleOAuthCallback(req, res) {
         });
 
         if (!userRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Failed to fetch Google user profile"));
+            return res.redirect(buildAuthErrorRedirect("Failed to fetch Google user profile", frontendBaseUrl));
         }
 
         const profile = await userRes.json();
@@ -814,11 +885,11 @@ export async function googleOAuthCallback(req, res) {
         });
 
         if (user.role === "REJECTED") {
-            return res.redirect(buildAuthErrorRedirect("Your account request was rejected"));
+            return res.redirect(buildAuthErrorRedirect("Your account request was rejected", frontendBaseUrl));
         }
 
         const token = issueUserToken(user);
-        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username));
+        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
     } catch (error) {
         console.error("googleOAuthCallback error:", error);
         return res.redirect(buildAuthErrorRedirect("Google login failed"));
@@ -832,10 +903,12 @@ export async function startMicrosoftOAuth(req, res) {
             return res.status(501).json({ message: "Microsoft OAuth is not configured" });
         }
 
-        const state = createOAuthState("microsoft");
+        const frontendBaseUrl = resolveFrontendBaseUrl(req);
+        const redirectUri = resolveOAuthRedirectUri(req, "microsoft");
+        const state = createOAuthState("microsoft", frontendBaseUrl);
         const authUrl = new URL(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize`);
         authUrl.searchParams.set("client_id", MICROSOFT_CLIENT_ID);
-        authUrl.searchParams.set("redirect_uri", MICROSOFT_REDIRECT_URI);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
         authUrl.searchParams.set("response_type", "code");
         authUrl.searchParams.set("scope", "openid profile email User.Read");
         authUrl.searchParams.set("response_mode", "query");
@@ -857,9 +930,13 @@ export async function microsoftOAuthCallback(req, res) {
             return res.redirect(buildAuthErrorRedirect("Missing Microsoft OAuth parameters"));
         }
 
-        if (!verifyOAuthState(state, "microsoft")) {
+        const statePayload = verifyOAuthState(state, "microsoft");
+        if (!statePayload) {
             return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
         }
+
+        const frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || resolveFrontendBaseUrl(req);
+        const redirectUri = resolveOAuthRedirectUri(req, "microsoft");
 
         const tokenRes = await fetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
             method: "POST",
@@ -868,19 +945,19 @@ export async function microsoftOAuthCallback(req, res) {
                 code: String(code),
                 client_id: MICROSOFT_CLIENT_ID,
                 client_secret: MICROSOFT_CLIENT_SECRET,
-                redirect_uri: MICROSOFT_REDIRECT_URI,
+                redirect_uri: redirectUri,
                 grant_type: "authorization_code",
             }),
         });
 
         if (!tokenRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Microsoft token exchange failed"));
+            return res.redirect(buildAuthErrorRedirect("Microsoft token exchange failed", frontendBaseUrl));
         }
 
         const tokenData = await tokenRes.json();
         const accessToken = tokenData?.access_token;
         if (!accessToken) {
-            return res.redirect(buildAuthErrorRedirect("Microsoft access token missing"));
+            return res.redirect(buildAuthErrorRedirect("Microsoft access token missing", frontendBaseUrl));
         }
 
         const userRes = await fetch("https://graph.microsoft.com/v1.0/me", {
@@ -888,7 +965,7 @@ export async function microsoftOAuthCallback(req, res) {
         });
 
         if (!userRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Failed to fetch Microsoft profile"));
+            return res.redirect(buildAuthErrorRedirect("Failed to fetch Microsoft profile", frontendBaseUrl));
         }
 
         const profile = await userRes.json();
@@ -905,11 +982,11 @@ export async function microsoftOAuthCallback(req, res) {
         });
 
         if (user.role === "REJECTED") {
-            return res.redirect(buildAuthErrorRedirect("Your account request was rejected"));
+            return res.redirect(buildAuthErrorRedirect("Your account request was rejected", frontendBaseUrl));
         }
 
         const token = issueUserToken(user);
-        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username));
+        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
     } catch (error) {
         console.error("microsoftOAuthCallback error:", error);
         return res.redirect(buildAuthErrorRedirect("Microsoft login failed"));
