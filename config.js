@@ -4,7 +4,19 @@ function normalizeEnv(value = "") {
 	return String(value || "").trim().replace(/^['"]|['"]$/g, "");
 }
 
+function normalizeOrigin(value = "") {
+	return normalizeEnv(value).replace(/\/+$/, "");
+}
+
 export const JWT_SECRET = process.env.JWT_SECRET || "lecturehallmanagement";
+export const PORT = Number(process.env.PORT || 3000);
+export const CORS_ALLOWED_ORIGINS = String(
+	process.env.CORS_ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5174"
+)
+	.split(",")
+	.map((v) => normalizeOrigin(v))
+	.filter(Boolean);
+export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
 
 const primaryUri = process.env.MONGODB_URI;
 const fallbackUri = process.env.MONGODB_URI_FALLBACK || "mongodb://127.0.0.1:27017/timelyx";
@@ -17,7 +29,6 @@ export const MONGODB_URI = primaryUri || fallbackUri;
 export const MONGODB_URI_FALLBACK = fallbackUri;
 
 export const RESET_PASSWORD_EXPIRES_MINUTES = Number(process.env.RESET_PASSWORD_EXPIRES_MINUTES || 15);
-export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
 
 export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
