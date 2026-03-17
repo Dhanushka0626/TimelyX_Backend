@@ -1,11 +1,10 @@
 import express from "express";
 import mongoose from "mongoose";
-import cors from "cors";
 
 import userRouter from "./routers/userRouter.js";
 import authenticateUser from "./middlewares/authentication.js";
 import requireDatabaseConnection from "./middlewares/databaseConnection.js";
-import { MONGODB_URI, MONGODB_URI_FALLBACK } from "./config.js";
+import { CORS_ALLOWED_ORIGINS, MONGODB_URI, MONGODB_URI_FALLBACK, PORT } from "./config.js";
 import hallRouter from "./routers/hallRouter.js";
 import bookingRouter from "./routers/bookingRouter.js";
 import notificationRouter from "./routers/notificationRouter.js";
@@ -19,6 +18,15 @@ import contactRouter from "./routers/contactRouter.js";
 
 const app = express();
 
+const vercelPreviewRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+const defaultAllowedHeaders = ["Origin", "X-Requested-With", "Content-Type", "Accept", "Authorization"];
+
+function isAllowedOrigin(origin) {
+    if (!origin) return true;
+
+    return CORS_ALLOWED_ORIGINS.includes(origin) || vercelPreviewRegex.test(origin);
+}
+
 // Fail fast on disconnected DB instead of hanging with buffering timeouts.
 mongoose.set("bufferCommands", false);
 
@@ -26,8 +34,8 @@ let serverStarted = false;
 const startServer = () => {
     if (serverStarted) return;
     serverStarted = true;
-    app.listen(3000, () => {
-        console.log("Server started on http://localhost:3000");
+    app.listen(PORT, () => {
+        console.log(`Server started on port ${PORT}`);
     });
 };
 
@@ -63,10 +71,33 @@ const connectMongo = async () => {
     }
 };
 
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
 
-app.use(cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"]
-}));
+    if (origin && isAllowedOrigin(origin)) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Vary", "Origin");
+        res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+
+        const requestedHeaders = req.headers["access-control-request-headers"];
+        res.header(
+            "Access-Control-Allow-Headers",
+            requestedHeaders || defaultAllowedHeaders.join(",")
+        );
+    }
+
+    if (req.method === "OPTIONS") {
+        if (!origin || isAllowedOrigin(origin)) {
+            return res.sendStatus(204);
+        }
+
+        return res.status(403).json({
+            message: "CORS blocked: origin not allowed"
+        });
+    }
+
+    next();
+});
 
 app.use(express.json());
 
