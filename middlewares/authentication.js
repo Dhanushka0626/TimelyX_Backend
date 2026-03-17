@@ -2,6 +2,21 @@ import jwt from "jsonwebtoken";
 import { JWT_SECRET } from "../config.js";
 import User from "../models/user.js";
 
+function isPublicAuthPath(path = "") {
+    if (!path.startsWith("/users")) return false;
+
+    return (
+        path === "/users" ||
+        path === "/users/login" ||
+        path === "/users/forgot-password" ||
+        path.startsWith("/users/reset-password/") ||
+        path === "/users/oauth/google" ||
+        path === "/users/oauth/google/callback" ||
+        path === "/users/oauth/microsoft" ||
+        path === "/users/oauth/microsoft/callback"
+    );
+}
+
 export default function authenticateUser(req, res, next) {
     const header = req.header("Authorization");
 
@@ -13,6 +28,10 @@ export default function authenticateUser(req, res, next) {
 
     jwt.verify(token, JWT_SECRET, async (error, decoded) => {
         if (error) {
+            if (isPublicAuthPath(req.path)) {
+                return next();
+            }
+
             return res.status(401).json({
                 message: "Invalid or Expired Token"
             });

@@ -11,12 +11,12 @@ function normalizeOrigin(value = "") {
 export const JWT_SECRET = process.env.JWT_SECRET || "lecturehallmanagement";
 export const PORT = Number(process.env.PORT || 3000);
 export const CORS_ALLOWED_ORIGINS = String(
-	process.env.CORS_ALLOWED_ORIGINS || "http://localhost:5173,http://localhost:5174"
+	process.env.CORS_ALLOWED_ORIGINS || "https://timely-x-frontend.vercel.app,http://localhost:5173,http://localhost:5174"
 )
 	.split(",")
 	.map((v) => normalizeOrigin(v))
 	.filter(Boolean);
-export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
+export const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "https://timely-x-frontend.vercel.app";
 
 const primaryUri = process.env.MONGODB_URI;
 const fallbackUri = process.env.MONGODB_URI_FALLBACK || "mongodb://127.0.0.1:27017/timelyx";

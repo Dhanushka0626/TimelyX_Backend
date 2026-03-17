@@ -864,24 +864,26 @@ export async function startGoogleOAuth(req, res) {
         return res.redirect(authUrl.toString());
     } catch (error) {
         console.error("startGoogleOAuth error:", error);
-        return res.redirect(buildAuthErrorRedirect("Unable to start Google login"));
+        return res.redirect(buildAuthErrorRedirect("Unable to start Google login", resolveFrontendBaseUrl(req)));
     }
 }
 
 // ================= GOOGLE OAUTH CALLBACK =================
 export async function googleOAuthCallback(req, res) {
+    let frontendBaseUrl = resolveFrontendBaseUrl(req);
+
     try {
         const { code, state } = req.query;
         if (!code || !state) {
-            return res.redirect(buildAuthErrorRedirect("Missing Google OAuth parameters"));
+            return res.redirect(buildAuthErrorRedirect("Missing Google OAuth parameters", frontendBaseUrl));
         }
 
         const statePayload = verifyOAuthState(state, "google");
         if (!statePayload) {
-            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
+            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state", frontendBaseUrl));
         }
 
-        const frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || resolveFrontendBaseUrl(req);
+        frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || frontendBaseUrl;
         const redirectUri = resolveOAuthRedirectUri(req, "google");
 
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -931,7 +933,19 @@ export async function googleOAuthCallback(req, res) {
         return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
     } catch (error) {
         console.error("googleOAuthCallback error:", error);
-        return res.redirect(buildAuthErrorRedirect("Google login failed"));
+
+        // If state is still verifiable, prefer the frontend URL captured at OAuth start.
+        try {
+            const statePayload = verifyOAuthState(req.query?.state, "google");
+            const fromState = normalizeUrl(statePayload?.frontendBaseUrl);
+            if (fromState) {
+                frontendBaseUrl = fromState;
+            }
+        } catch {
+            // Keep previously resolved frontendBaseUrl fallback.
+        }
+
+        return res.redirect(buildAuthErrorRedirect("Google login failed", frontendBaseUrl));
     }
 }
 
@@ -957,24 +971,26 @@ export async function startMicrosoftOAuth(req, res) {
         return res.redirect(authUrl.toString());
     } catch (error) {
         console.error("startMicrosoftOAuth error:", error);
-        return res.redirect(buildAuthErrorRedirect("Unable to start Microsoft login"));
+        return res.redirect(buildAuthErrorRedirect("Unable to start Microsoft login", resolveFrontendBaseUrl(req)));
     }
 }
 
 // ================= MICROSOFT OAUTH CALLBACK =================
 export async function microsoftOAuthCallback(req, res) {
+    let frontendBaseUrl = resolveFrontendBaseUrl(req);
+
     try {
         const { code, state } = req.query;
         if (!code || !state) {
-            return res.redirect(buildAuthErrorRedirect("Missing Microsoft OAuth parameters"));
+            return res.redirect(buildAuthErrorRedirect("Missing Microsoft OAuth parameters", frontendBaseUrl));
         }
 
         const statePayload = verifyOAuthState(state, "microsoft");
         if (!statePayload) {
-            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
+            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state", frontendBaseUrl));
         }
 
-        const frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || resolveFrontendBaseUrl(req);
+        frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || frontendBaseUrl;
         const redirectUri = resolveOAuthRedirectUri(req, "microsoft");
 
         const tokenRes = await fetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
@@ -1028,6 +1044,18 @@ export async function microsoftOAuthCallback(req, res) {
         return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
     } catch (error) {
         console.error("microsoftOAuthCallback error:", error);
-        return res.redirect(buildAuthErrorRedirect("Microsoft login failed"));
+
+        // If state is still verifiable, prefer the frontend URL captured at OAuth start.
+        try {
+            const statePayload = verifyOAuthState(req.query?.state, "microsoft");
+            const fromState = normalizeUrl(statePayload?.frontendBaseUrl);
+            if (fromState) {
+                frontendBaseUrl = fromState;
+            }
+        } catch {
+            // Keep previously resolved frontendBaseUrl fallback.
+        }
+
+        return res.redirect(buildAuthErrorRedirect("Microsoft login failed", frontendBaseUrl));
     }
 }
