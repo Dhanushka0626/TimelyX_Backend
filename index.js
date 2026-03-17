@@ -17,6 +17,7 @@ import toRouter from "./routers/toRouter.js";
 import contactRouter from "./routers/contactRouter.js";
 
 const app = express();
+app.set("trust proxy", 1);
 
 const vercelPreviewRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 const defaultAllowedHeaders = ["Origin", "X-Requested-With", "Content-Type", "Accept", "Authorization"];

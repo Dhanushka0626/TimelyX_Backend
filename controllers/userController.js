@@ -73,12 +73,39 @@ function resolveOAuthRedirectUri(req, provider) {
         ? normalizeUrl(GOOGLE_REDIRECT_URI)
         : normalizeUrl(MICROSOFT_REDIRECT_URI);
 
-    if (configured && !configured.includes("localhost")) {
+    const expectedPath = `/users/oauth/${provider}/callback`;
+    const backendBase = resolveBackendBaseUrl(req);
+    const derived = `${backendBase}${expectedPath}`;
+
+    if (!configured) {
+        return derived;
+    }
+
+    const configuredLooksLocal = configured.includes("localhost") || configured.includes("127.0.0.1");
+
+    let configuredPath = "";
+    try {
+        configuredPath = new URL(configured).pathname.replace(/\/+$/, "");
+    } catch {
+        configuredPath = configured;
+    }
+
+    const pathMatches = configuredPath === expectedPath;
+    const configuredOrigin = extractOriginFromUrl(configured);
+    const backendOrigin = extractOriginFromUrl(derived);
+    const originMismatchInProd =
+        Boolean(configuredOrigin && backendOrigin) &&
+        configuredOrigin !== backendOrigin &&
+        !backendOrigin.includes("localhost") &&
+        !backendOrigin.includes("127.0.0.1");
+
+    // In production, stale env values are common after domain changes.
+    // Fall back to request-derived callback when configured URI is unsafe/mismatched.
+    if (!configuredLooksLocal && pathMatches && !originMismatchInProd) {
         return configured;
     }
 
-    const backendBase = resolveBackendBaseUrl(req);
-    return `${backendBase}/users/oauth/${provider}/callback`;
+    return derived;
 }
 
 function createOAuthState(provider, frontendBaseUrl) {
