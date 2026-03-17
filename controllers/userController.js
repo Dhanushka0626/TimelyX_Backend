@@ -18,7 +18,7 @@ import {
     MICROSOFT_TENANT_ID,
     RESET_PASSWORD_EXPIRES_MINUTES,
 } from "../config.js";
-import { buildMailTransportOptions, sendMailWithTimeout } from "../utils/mailTransport.js";
+import { sendMailWithFallback } from "../utils/mailTransport.js";
 
 function escapeRegex(value = "") {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -155,10 +155,8 @@ async function sendResetPasswordEmail({ to, firstName, resetLink }) {
     const appName = "Timelyx";
     const safeName = firstName || "User";
 
-    const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport(buildMailTransportOptions());
-    await sendMailWithTimeout(transporter, {
-        from: GMAIL_USER,
+    await sendMailWithFallback({
+        from: `Timelyx <${GMAIL_USER}>`,
         to,
         subject: `${appName} Password Reset`,
         text: `Hello ${safeName},\n\nUse this link to reset your password:\n${resetLink}\n\nThis link expires in ${RESET_PASSWORD_EXPIRES_MINUTES} minutes.\n\nIf you did not request this, please ignore this email.`,

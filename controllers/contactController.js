@@ -1,12 +1,7 @@
-import nodemailer from "nodemailer";
 import mongoose from "mongoose";
 import { CONTACT_RECEIVER_EMAIL, GMAIL_USER, GMAIL_PASSWORD } from "../config.js";
 import ContactMessage from "../models/contactMessage.js";
-import { buildMailTransportOptions, sendMailWithTimeout } from "../utils/mailTransport.js";
-
-function createTransporter() {
-  return nodemailer.createTransport(buildMailTransportOptions());
-}
+import { sendMailWithFallback } from "../utils/mailTransport.js";
 
 // Send contact message email
 async function sendMessage(req, res) {
@@ -33,8 +28,9 @@ async function sendMessage(req, res) {
     );
 
     const mailOptions = {
-      from: GMAIL_USER,
+      from: `Timelyx Contact <${GMAIL_USER}>`,
       to: CONTACT_RECEIVER_EMAIL,
+      cc: CONTACT_RECEIVER_EMAIL !== GMAIL_USER ? GMAIL_USER : undefined,
       subject: `New Contact Message from ${trimmedPayload.name}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -72,8 +68,7 @@ async function sendMessage(req, res) {
     }
 
     try {
-      const transporter = createTransporter();
-      await sendMailWithTimeout(transporter, mailOptions);
+      await sendMailWithFallback(mailOptions);
 
       if (savedMessage) {
         savedMessage.deliveryStatus = "delivered";

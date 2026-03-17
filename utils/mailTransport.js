@@ -1,3 +1,4 @@
+import nodemailer from "nodemailer";
 import { GMAIL_PASSWORD, GMAIL_USER } from "../config.js";
 
 function parseBoolean(value, fallback = false) {
@@ -46,4 +47,86 @@ export async function sendMailWithTimeout(transporter, mailOptions) {
             setTimeout(() => reject(new Error(`Mail send timed out after ${timeoutMs}ms`)), timeoutMs);
         }),
     ]);
+}
+
+function buildTransportCandidates() {
+    const candidates = [];
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpUser = GMAIL_USER;
+    const smtpPass = GMAIL_PASSWORD;
+
+    if (!smtpUser || !smtpPass) {
+        return candidates;
+    }
+
+    if (smtpHost) {
+        candidates.push(buildMailTransportOptions());
+    }
+
+    // Gmail service strategy (often works even when direct host/port has issues).
+    candidates.push({
+        service: "gmail",
+        auth: {
+            user: smtpUser,
+            pass: smtpPass,
+        },
+        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
+        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
+        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
+        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+    });
+
+    // Explicit SSL strategy.
+    candidates.push({
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true,
+        auth: {
+            user: smtpUser,
+            pass: smtpPass,
+        },
+        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
+        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
+        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
+        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+    });
+
+    // Explicit STARTTLS strategy.
+    candidates.push({
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        auth: {
+            user: smtpUser,
+            pass: smtpPass,
+        },
+        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
+        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
+        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
+        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+    });
+
+    return candidates;
+}
+
+export async function sendMailWithFallback(mailOptions) {
+    const candidates = buildTransportCandidates();
+    if (candidates.length === 0) {
+        throw new Error("Email service is not configured");
+    }
+
+    let lastError = null;
+
+    for (const candidate of candidates) {
+        try {
+            const transporter = nodemailer.createTransport(candidate);
+            const result = await sendMailWithTimeout(transporter, mailOptions);
+            return result;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw lastError || new Error("Mail delivery failed");
 }
