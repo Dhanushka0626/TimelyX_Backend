@@ -4,7 +4,6 @@ import RejectedRegistration from "../models/rejectedRegistration.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import nodemailer from "nodemailer";
 import {
     FRONTEND_BASE_URL,
     GMAIL_PASSWORD,
@@ -19,6 +18,7 @@ import {
     MICROSOFT_TENANT_ID,
     RESET_PASSWORD_EXPIRES_MINUTES,
 } from "../config.js";
+import { buildMailTransportOptions, sendMailWithTimeout } from "../utils/mailTransport.js";
 
 function escapeRegex(value = "") {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -147,42 +147,6 @@ function buildAuthSuccessRedirect(token, role, username, frontendBaseUrl = FRONT
     return `${normalizeUrl(frontendBaseUrl)}/oauth/callback?${params.toString()}`;
 }
 
-function createMailTransporter() {
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = Number(process.env.SMTP_PORT || 587);
-    const smtpSecure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-    const isProduction = String(process.env.NODE_ENV || "development") === "production";
-    const tlsRejectUnauthorized = String(
-        process.env.SMTP_TLS_REJECT_UNAUTHORIZED || (isProduction ? "true" : "false")
-    ).toLowerCase() === "true";
-
-    if (smtpHost) {
-        return nodemailer.createTransport({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            auth: {
-                user: GMAIL_USER,
-                pass: GMAIL_PASSWORD,
-            },
-            tls: {
-                rejectUnauthorized: tlsRejectUnauthorized,
-            },
-        });
-    }
-
-    return nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: GMAIL_USER,
-            pass: GMAIL_PASSWORD,
-        },
-        tls: {
-            rejectUnauthorized: tlsRejectUnauthorized,
-        },
-    });
-}
-
 async function sendResetPasswordEmail({ to, firstName, resetLink }) {
     if (!GMAIL_USER || !GMAIL_PASSWORD || GMAIL_PASSWORD === "your-app-specific-password-here") {
         throw new Error("Email service is not configured");
@@ -191,8 +155,9 @@ async function sendResetPasswordEmail({ to, firstName, resetLink }) {
     const appName = "Timelyx";
     const safeName = firstName || "User";
 
-    const transporter = createMailTransporter();
-    await transporter.sendMail({
+    const nodemailer = await import("nodemailer");
+    const transporter = nodemailer.default.createTransport(buildMailTransportOptions());
+    await sendMailWithTimeout(transporter, {
         from: GMAIL_USER,
         to,
         subject: `${appName} Password Reset`,
@@ -796,6 +761,12 @@ export async function forgotPassword(req, res) {
         return res.status(200).json(response);
     } catch (error) {
         console.log("FORGOT PASSWORD ERROR:", error);
+        if (error?.message?.includes("Mail send timed out") || error?.code === "ETIMEDOUT") {
+            return res.status(503).json({
+                message: "Email service is taking too long to respond. Please try again shortly."
+            });
+        }
+
         return res.status(500).json({
             message: error.message || "Error processing forgot password request"
         });
