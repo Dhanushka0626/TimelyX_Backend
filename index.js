@@ -22,6 +22,7 @@ const app = express();
 
 // Get port from environment or default to 3000
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || "0.0.0.0";
 
 // Fail fast on disconnected DB instead of hanging with buffering timeouts.
 mongoose.set("bufferCommands", false);
@@ -30,8 +31,8 @@ let serverStarted = false;
 const startServer = () => {
     if (serverStarted) return;
     serverStarted = true;
-    app.listen(PORT, () => {
-        console.log(`Server started on port ${PORT}`);
+    app.listen(PORT, HOST, () => {
+        console.log(`Server started on http://${HOST}:${PORT}`);
     });
 };
 
