@@ -1,10 +1,12 @@
 import express from "express";
 import mongoose from "mongoose";
+import cors from "cors";
+import "dotenv/config";
 
 import userRouter from "./routers/userRouter.js";
 import authenticateUser from "./middlewares/authentication.js";
 import requireDatabaseConnection from "./middlewares/databaseConnection.js";
-import { CORS_ALLOWED_ORIGINS, MONGODB_URI, MONGODB_URI_FALLBACK, PORT } from "./config.js";
+import { MONGODB_URI, MONGODB_URI_FALLBACK, FRONTEND_BASE_URL } from "./config.js";
 import hallRouter from "./routers/hallRouter.js";
 import bookingRouter from "./routers/bookingRouter.js";
 import notificationRouter from "./routers/notificationRouter.js";
@@ -17,22 +19,9 @@ import toRouter from "./routers/toRouter.js";
 import contactRouter from "./routers/contactRouter.js";
 
 const app = express();
-app.set("trust proxy", 1);
 
-const vercelPreviewRegex = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
-const defaultAllowedHeaders = ["Origin", "X-Requested-With", "Content-Type", "Accept", "Authorization"];
-
-function normalizeOrigin(value = "") {
-    return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function isAllowedOrigin(origin) {
-    if (!origin) return true;
-
-    const normalizedOrigin = normalizeOrigin(origin);
-
-    return CORS_ALLOWED_ORIGINS.includes(normalizedOrigin) || vercelPreviewRegex.test(normalizedOrigin);
-}
+// Get port from environment or default to 3000
+const PORT = process.env.PORT || 3000;
 
 // Fail fast on disconnected DB instead of hanging with buffering timeouts.
 mongoose.set("bufferCommands", false);
@@ -78,33 +67,24 @@ const connectMongo = async () => {
     }
 };
 
-app.use((req, res, next) => {
-    const origin = normalizeOrigin(req.headers.origin);
+// Configure CORS for both development and production
+const corsOrigins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://timely-x-frontend.vercel.app"
+];
 
-    if (origin && isAllowedOrigin(origin)) {
-        res.header("Access-Control-Allow-Origin", origin);
-        res.header("Vary", "Origin");
-        res.header("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+// Add FRONTEND_BASE_URL to allowed origins if it's different from default
+if (FRONTEND_BASE_URL && !corsOrigins.includes(FRONTEND_BASE_URL)) {
+    corsOrigins.push(FRONTEND_BASE_URL);
+}
 
-        const requestedHeaders = req.headers["access-control-request-headers"];
-        res.header(
-            "Access-Control-Allow-Headers",
-            requestedHeaders || defaultAllowedHeaders.join(",")
-        );
-    }
-
-    if (req.method === "OPTIONS") {
-        if (!origin || isAllowedOrigin(origin)) {
-            return res.sendStatus(204);
-        }
-
-        return res.status(403).json({
-            message: "CORS blocked: origin not allowed"
-        });
-    }
-
-    next();
-});
+app.use(cors({
+    origin: corsOrigins,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 app.use(express.json());
 

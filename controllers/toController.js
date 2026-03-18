@@ -1,136 +1,7 @@
 import Notification from "../models/notification.js";
 import User from "../models/user.js";
-import RejectedRegistration from "../models/rejectedRegistration.js";
 import mongoose from "mongoose";
 import * as notificationController from "./notificationController.js";
-import nodemailer from "nodemailer";
-import { GMAIL_USER, GMAIL_PASSWORD, FRONTEND_BASE_URL } from "../config.js";
-
-function createMailTransporter() {
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = Number(process.env.SMTP_PORT || 587);
-    const smtpSecure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-    const isProduction = String(process.env.NODE_ENV || "development") === "production";
-    const tlsRejectUnauthorized = String(
-        process.env.SMTP_TLS_REJECT_UNAUTHORIZED || (isProduction ? "true" : "false")
-    ).toLowerCase() === "true";
-
-    if (smtpHost) {
-        return nodemailer.createTransport({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            auth: { user: GMAIL_USER, pass: GMAIL_PASSWORD },
-            tls: { rejectUnauthorized: tlsRejectUnauthorized },
-        });
-    }
-
-    return nodemailer.createTransport({
-        service: "gmail",
-        auth: { user: GMAIL_USER, pass: GMAIL_PASSWORD },
-        tls: {
-            rejectUnauthorized: String(process.env.NODE_ENV || "development") === "production",
-        },
-    });
-}
-
-async function sendRejectionEmail({ to, firstName, rejectionReason }) {
-    if (!GMAIL_USER || !GMAIL_PASSWORD) return; // email not configured — skip silently
-
-    const safeName = firstName || "Applicant";
-    const loginUrl = `${FRONTEND_BASE_URL}/login`;
-
-    const transporter = createMailTransporter();
-    await transporter.sendMail({
-        from: `"Timelyx" <${GMAIL_USER}>`,
-        to,
-        subject: "Timelyx — Your Registration Request Was Rejected",
-        text: [
-            `Hello ${safeName},`,
-            ``,
-            `We regret to inform you that your registration request for Timelyx has been reviewed and rejected.`,
-            ``,
-            `Reason: ${rejectionReason}`,
-            ``,
-            `If you believe this decision was made in error, please contact your department administrator or re-register with the correct details.`,
-            ``,
-            `Regards,`,
-            `The Timelyx Team`,
-        ].join("\n"),
-        html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111;">
-                <div style="background: #1e293b; padding: 24px 32px; border-radius: 12px 12px 0 0;">
-                    <h1 style="color: #fff; margin: 0; font-size: 22px;">Timelyx</h1>
-                </div>
-                <div style="background: #fff; border: 1px solid #e2e8f0; border-top: none; padding: 32px; border-radius: 0 0 12px 12px;">
-                    <h2 style="color: #dc2626; margin-top: 0;">Registration Request Rejected</h2>
-                    <p>Hello <strong>${safeName}</strong>,</p>
-                    <p>We regret to inform you that your registration request for <strong>Timelyx</strong> has been reviewed and <strong style="color:#dc2626;">rejected</strong>.</p>
-                    <div style="background: #fef2f2; border-left: 4px solid #dc2626; border-radius: 6px; padding: 14px 18px; margin: 20px 0;">
-                        <p style="margin: 0; font-weight: 600; color: #991b1b;">Reason for rejection:</p>
-                        <p style="margin: 8px 0 0; color: #7f1d1d;">${rejectionReason}</p>
-                    </div>
-                    <p>If you believe this decision was made in error, please contact your department administrator or re-register with the correct information.</p>
-                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-                    <p style="font-size: 12px; color: #94a3b8;">This is an automated message from Timelyx. Please do not reply directly to this email.</p>
-                </div>
-            </div>
-        `,
-    });
-}
-
-async function sendApprovalEmail({ to, firstName, role }) {
-    if (!GMAIL_USER || !GMAIL_PASSWORD) return; // email not configured — skip silently
-
-    const safeName = firstName || "Applicant";
-    const safeRole = role ? role.charAt(0).toUpperCase() + role.slice(1).toLowerCase() : "User";
-    const loginUrl = `${FRONTEND_BASE_URL}/login`;
-
-    const transporter = createMailTransporter();
-    await transporter.sendMail({
-        from: `"Timelyx" <${GMAIL_USER}>`,
-        to,
-        subject: "Timelyx — Your Registration Request Has Been Approved!",
-        text: [
-            `Hello ${safeName},`,
-            ``,
-            `Great news! Your registration request for Timelyx has been reviewed and approved.`,
-            ``,
-            `You have been granted access as: ${safeRole}`,
-            ``,
-            `You can now log in to your account and start using Timelyx:`,
-            loginUrl,
-            ``,
-            `If you have any questions, please contact your department administrator.`,
-            ``,
-            `Welcome aboard!`,
-            `The Timelyx Team`,
-        ].join("\n"),
-        html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #111;">
-                <div style="background: #1e293b; padding: 24px 32px; border-radius: 12px 12px 0 0;">
-                    <h1 style="color: #fff; margin: 0; font-size: 22px;">Timelyx</h1>
-                </div>
-                <div style="background: #fff; border: 1px solid #e2e8f0; border-top: none; padding: 32px; border-radius: 0 0 12px 12px;">
-                    <h2 style="color: #16a34a; margin-top: 0;">Registration Approved &#127881;</h2>
-                    <p>Hello <strong>${safeName}</strong>,</p>
-                    <p>Great news! Your registration request for <strong>Timelyx</strong> has been reviewed and <strong style="color:#16a34a;">approved</strong>.</p>
-                    <div style="background: #f0fdf4; border-left: 4px solid #16a34a; border-radius: 6px; padding: 14px 18px; margin: 20px 0;">
-                        <p style="margin: 0; font-weight: 600; color: #15803d;">Your account role:</p>
-                        <p style="margin: 8px 0 0; color: #14532d; font-size: 16px;">${safeRole}</p>
-                    </div>
-                    <p>You can now log in to your account and start using Timelyx.</p>
-                    <div style="text-align: center; margin: 28px 0;">
-                        <a href="${loginUrl}" style="background: #1e293b; color: #fff; text-decoration: none; padding: 12px 32px; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">Log In to Timelyx</a>
-                    </div>
-                    <p>If you have any questions, please contact your department administrator.</p>
-                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-                    <p style="font-size: 12px; color: #94a3b8;">This is an automated message from Timelyx. Please do not reply directly to this email.</p>
-                </div>
-            </div>
-        `,
-    });
-}
 
 export async function getDashboard(req, res) {
     try {
@@ -193,11 +64,6 @@ export async function getPendingUsers(req, res) {
         if (!req.user || req.user.role !== 'TO') {
             return res.status(403).json({ message: 'TO access required' });
         }
-        // Clean up any legacy REJECTED-role users remaining from before auto-deletion was implemented.
-        await User.deleteMany({ role: 'REJECTED' }).catch(e =>
-            console.error('Legacy REJECTED user cleanup error:', e.message)
-        );
-
         const users = await User.find({ role: 'PENDING' })
             .select('firstName lastName email username role requestedRole department designation batch semester courses createdAt')
             .sort({ createdAt: -1 });
@@ -276,13 +142,6 @@ export async function approveUser(req, res) {
         user.role = finalRole;
 
         await user.save();
-
-        // Send approval email — non-blocking so a mail failure never breaks the response
-        sendApprovalEmail({
-            to: user.email,
-            firstName: user.firstName,
-            role: finalRole,
-        }).catch(e => console.error('Approval email error:', e.message));
 
         return res.status(200).json({ message: 'User approved' });
     } catch (error) {
@@ -363,50 +222,10 @@ export async function rejectUser(req, res) {
             return res.status(400).json({ message: 'User is not pending approval' });
         }
 
-        const rejectionReason = typeof req.body.rejectionReason === 'string'
-            ? req.body.rejectionReason.trim()
-            : '';
+        user.role = 'REJECTED';
+        await user.save();
 
-        if (!rejectionReason) {
-            return res.status(400).json({
-                message: 'Rejection reason is required when rejecting a registration request'
-            });
-        }
-
-        // Capture details before deletion so the email can still be sent
-        const rejectedEmail = user.email;
-        const rejectedFirstName = user.firstName;
-        const rejectedUsername = user.username;
-
-        // Persist rejected identity to block repeated registration attempts
-        const emailLower = String(rejectedEmail || '').trim().toLowerCase();
-        const usernameLower = String(rejectedUsername || '').trim().toLowerCase();
-        await RejectedRegistration.updateOne(
-            { $or: [{ emailLower }, { usernameLower }] },
-            {
-                $set: {
-                    emailLower: emailLower || null,
-                    usernameLower: usernameLower || null,
-                    reason: rejectionReason,
-                    rejectedBy: req.user._id,
-                }
-            },
-            { upsert: true }
-        );
-
-        // Permanently delete the user — their registration details are removed from the system
-        await User.deleteOne({ _id: user._id });
-
-        // email notification — non-blocking so a missing email config never fails the request
-        sendRejectionEmail({
-            to: rejectedEmail,
-            firstName: rejectedFirstName,
-            rejectionReason,
-        }).catch(emailErr => {
-            console.error('TO rejectUser email error:', emailErr.message);
-        });
-
-        return res.status(200).json({ message: 'User rejected and removed from system' });
+        return res.status(200).json({ message: 'User rejected' });
     } catch (error) {
         console.error('TO rejectUser error:', error);
         return res.status(500).json({ message: 'Error rejecting user', error: error.message });
@@ -419,8 +238,8 @@ export async function getHistory(req, res) {
             return res.status(403).json({ message: 'TO access required' });
         }
         
-        // build query filter - only approved (active) users; rejected users are deleted on rejection
-        const filter = { role: { $nin: ['PENDING', 'REJECTED'] } };
+        // build query filter - get all non-pending users (approved or rejected)
+        const filter = { role: { $nin: ['PENDING'] } };
         
         if (req.query.startDate || req.query.endDate) {
             filter.updatedAt = {};
@@ -447,8 +266,8 @@ export async function getHistory(req, res) {
             const dateSource = u.updatedAt || u.createdAt || new Date();
             const dateStr = dateSource instanceof Date ? dateSource.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
 
-            // All records in history are approved (rejected users are deleted)
-            const status = 'approved';
+            // Determine status based on role
+            const status = u.role === 'REJECTED' ? 'rejected' : 'approved';
 
             return {
                 id: u._id,
@@ -459,7 +278,6 @@ export async function getHistory(req, res) {
                 requestedRole: u.requestedRole,
                 department: u.department || '',
                 designation: u.designation || '',
-                rejectionReason: u.rejectionReason || '',
                 date: dateStr,
                 status: status
             };

@@ -85,12 +85,6 @@ const userSchema = new mongoose.Schema(
             type: String,
             required: false
         },
-        rejectionReason: {
-            type: String,
-            required: false,
-            default: null,
-            trim: true
-        },
         resetPasswordToken: {
             type: String,
             required: false,

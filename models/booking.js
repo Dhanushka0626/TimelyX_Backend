@@ -35,12 +35,6 @@ const bookingSchema = new mongoose.Schema({
         enum: ["PENDING", "APPROVED", "REJECTED"],
         default: "PENDING"
     },
-    rejectionReason: {
-        type: String,
-        required: false,
-        default: null,
-        trim: true
-    },
     cancelledAt: {
         type: Date,
         default: null

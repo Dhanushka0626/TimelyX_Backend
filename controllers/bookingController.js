@@ -70,16 +70,7 @@ export async function createBooking(req, res) {
             }
         }
 
-        // Block re-request: prevent a lecturer from re-booking a slot already rejected by HOD.
-        if (req.user.role === "LECTURER") {
-            const existingRejected = await Booking.findOne({ lecturer: req.user._id, timeSlot: slot._id, status: "REJECTED" });
-            if (existingRejected) {
-                return res.status(400).json({
-                    message: "Your booking request for this hall on this date and time was previously rejected by HOD. You cannot re-submit the same request."
-                });
-            }
-        }
-
+        
         if (slot.status !== "AVAILABLE") {
             return res.status(400).json({
                 message: "Slot already locked or booked"
@@ -144,18 +135,9 @@ export async function updateBookingStatus(req, res) {
         }
 
         const { status } = req.body;
-        const rejectionReason = typeof req.body.rejectionReason === 'string'
-            ? req.body.rejectionReason.trim()
-            : '';
 
         if (status !== "APPROVED" && status !== "REJECTED") {
             return res.status(400).json({ message: "Invalid status value" });
-        }
-
-        if (status === "REJECTED" && !rejectionReason) {
-            return res.status(400).json({
-                message: "Rejection reason is required when rejecting a booking request"
-            });
         }
 
         // If this booking is part of a grouped request, operate on the whole group
@@ -172,7 +154,6 @@ export async function updateBookingStatus(req, res) {
 
         for (const b of bookingsToUpdate) {
             b.status = status;
-            b.rejectionReason = status === "REJECTED" ? rejectionReason : null;
 
             if (status === "APPROVED") {
                 if (b.timeSlot) {
@@ -266,7 +247,7 @@ export async function updateBookingStatus(req, res) {
                 } else {
                 }
             } else if (status === "REJECTED") {
-                const msg = `Your booking request for ${subject} on ${date} at ${timesLabel} has been rejected. Reason: ${rejectionReason}`;
+                const msg = `Your booking request for ${subject} on ${date} at ${timesLabel} has been rejected.`;
                 const n = new Notification({
                     sender: req.user._id,
                     receivers: [lecturerId],
@@ -279,11 +260,7 @@ export async function updateBookingStatus(req, res) {
             console.error('Notification send error after booking status update:', notifyErr);
         }
 
-        return res.status(200).json({
-            message: "Booking updated successfully",
-            updated: bookingsToUpdate.length,
-            rejectionReason: status === "REJECTED" ? rejectionReason : null
-        });
+        return res.status(200).json({ message: "Booking updated successfully", updated: bookingsToUpdate.length });
 
     } catch (error) {
         return res.status(500).json({
@@ -524,38 +501,6 @@ export async function createRangeBooking(req, res) {
 
         if (foundSlots.length !== slots.length) {
             return res.status(400).json({ message: "Not all requested time slots exist for this hall" });
-        }
-
-        // Block re-request: if this lecturer already has a REJECTED booking for any of
-        // the requested slots, they are not allowed to re-submit the same request.
-        if (req.user.role === "LECTURER") {
-            const slotIds = foundSlots.map(s => s._id);
-            const existingRejected = await Booking.findOne({
-                lecturer: req.user._id,
-                timeSlot: { $in: slotIds },
-                status: "REJECTED"
-            });
-            if (existingRejected) {
-                return res.status(400).json({
-                    message: "Your booking request for this hall on this date and time was previously rejected by HOD. You cannot re-submit the same request."
-                });
-            }
-        }
-
-        // Block re-request: if this lecturer already has a REJECTED booking for any of
-        // the requested slots, they are not allowed to re-submit the same request.
-        if (req.user.role === "LECTURER") {
-            const slotIds = foundSlots.map(s => s._id);
-            const existingRejected = await Booking.findOne({
-                lecturer: req.user._id,
-                timeSlot: { $in: slotIds },
-                status: "REJECTED"
-            });
-            if (existingRejected) {
-                return res.status(400).json({
-                    message: "Your booking request for this hall on this date and time was previously rejected by HOD. You cannot re-submit the same request."
-                });
-            }
         }
 
         if (!foundSlots.every(s => s.status === "AVAILABLE")) {

@@ -1,9 +1,9 @@
 import User from "../models/user.js";
 import Notification from "../models/notification.js";
-import RejectedRegistration from "../models/rejectedRegistration.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 import {
     FRONTEND_BASE_URL,
     GMAIL_PASSWORD,
@@ -18,133 +18,64 @@ import {
     MICROSOFT_TENANT_ID,
     RESET_PASSWORD_EXPIRES_MINUTES,
 } from "../config.js";
-import { sendMailWithFallback } from "../utils/mailTransport.js";
 
 function escapeRegex(value = "") {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function normalizeUrl(value = "") {
-    return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function extractOriginFromUrl(value = "") {
-    try {
-        return new URL(value).origin;
-    } catch {
-        return "";
-    }
-}
-
-function isSafeHttpOrigin(value = "") {
-    const origin = extractOriginFromUrl(value);
-    return Boolean(origin && /^https?:\/\//i.test(origin));
-}
-
-function resolveBackendBaseUrl(req) {
-    const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-    const proto = forwardedProto || req.protocol || "https";
-    const forwardedHost = String(req.get("x-forwarded-host") || "").split(",")[0].trim();
-    const host = forwardedHost || req.get("host");
-
-    if (!host) {
-        return "http://localhost:3000";
-    }
-
-    return `${proto}://${host}`;
-}
-
-function resolveFrontendBaseUrl(req) {
-    const requestedFrontendBase = normalizeUrl(
-        req.query?.frontendBaseUrl || req.query?.frontend || req.query?.redirectBase || ""
-    );
-    if (isSafeHttpOrigin(requestedFrontendBase)) {
-        return requestedFrontendBase;
-    }
-
-    const configured = normalizeUrl(FRONTEND_BASE_URL);
-    if (configured && !configured.includes("localhost")) {
-        return configured;
-    }
-
-    const requestOrigin = normalizeUrl(req.get("origin") || "");
-    if (requestOrigin) {
-        return requestOrigin;
-    }
-
-    const refererOrigin = extractOriginFromUrl(req.get("referer") || "");
-    if (refererOrigin) {
-        return normalizeUrl(refererOrigin);
-    }
-
-    return configured || "http://localhost:5173";
-}
-
-function resolveOAuthRedirectUri(req, provider) {
-    const configured = provider === "google"
-        ? normalizeUrl(GOOGLE_REDIRECT_URI)
-        : normalizeUrl(MICROSOFT_REDIRECT_URI);
-
-    const expectedPath = `/users/oauth/${provider}/callback`;
-    const backendBase = resolveBackendBaseUrl(req);
-    const derived = `${backendBase}${expectedPath}`;
-
-    if (!configured) {
-        return derived;
-    }
-
-    const configuredLooksLocal = configured.includes("localhost") || configured.includes("127.0.0.1");
-
-    let configuredPath = "";
-    try {
-        configuredPath = new URL(configured).pathname.replace(/\/+$/, "");
-    } catch {
-        configuredPath = configured;
-    }
-
-    const pathMatches = configuredPath === expectedPath;
-    const configuredOrigin = extractOriginFromUrl(configured);
-    const backendOrigin = extractOriginFromUrl(derived);
-    const originMismatchInProd =
-        Boolean(configuredOrigin && backendOrigin) &&
-        configuredOrigin !== backendOrigin &&
-        !backendOrigin.includes("localhost") &&
-        !backendOrigin.includes("127.0.0.1");
-
-    // In production, stale env values are common after domain changes.
-    // Fall back to request-derived callback when configured URI is unsafe/mismatched.
-    if (!configuredLooksLocal && pathMatches && !originMismatchInProd) {
-        return configured;
-    }
-
-    return derived;
-}
-
-function createOAuthState(provider, frontendBaseUrl) {
-    return jwt.sign(
-        { provider, frontendBaseUrl: normalizeUrl(frontendBaseUrl), type: "oauth_state" },
-        JWT_SECRET,
-        { expiresIn: "10m" }
-    );
+function createOAuthState(provider) {
+    return jwt.sign({ provider, type: "oauth_state" }, JWT_SECRET, { expiresIn: "10m" });
 }
 
 function verifyOAuthState(token, provider) {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded?.type !== "oauth_state" || decoded?.provider !== provider) {
-        return null;
+    return decoded?.type === "oauth_state" && decoded?.provider === provider;
+}
+
+function buildAuthErrorRedirect(message) {
+    const safe = encodeURIComponent(message || "Authentication failed");
+    return `${FRONTEND_BASE_URL}/login?oauthError=${safe}`;
+}
+
+function buildAuthSuccessRedirect(token, role, username) {
+    const params = new URLSearchParams({ token, role, username: username || "" });
+    return `${FRONTEND_BASE_URL}/oauth/callback?${params.toString()}`;
+}
+
+function createMailTransporter() {
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = Number(process.env.SMTP_PORT || 587);
+    const smtpSecure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
+    const isProduction = String(process.env.NODE_ENV || "development") === "production";
+    const tlsRejectUnauthorized = String(
+        process.env.SMTP_TLS_REJECT_UNAUTHORIZED || (isProduction ? "true" : "false")
+    ).toLowerCase() === "true";
+
+    if (smtpHost) {
+        return nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure,
+            auth: {
+                user: GMAIL_USER,
+                pass: GMAIL_PASSWORD,
+            },
+            tls: {
+                rejectUnauthorized: tlsRejectUnauthorized,
+            },
+        });
     }
 
-    return decoded;
-}
-
-function buildAuthErrorRedirect(message, frontendBaseUrl = FRONTEND_BASE_URL) {
-    const safe = encodeURIComponent(message || "Authentication failed");
-    return `${normalizeUrl(frontendBaseUrl)}/login?oauthError=${safe}`;
-}
-
-function buildAuthSuccessRedirect(token, role, username, frontendBaseUrl = FRONTEND_BASE_URL) {
-    const params = new URLSearchParams({ token, role, username: username || "" });
-    return `${normalizeUrl(frontendBaseUrl)}/oauth/callback?${params.toString()}`;
+    return nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+            user: GMAIL_USER,
+            pass: GMAIL_PASSWORD,
+        },
+        tls: {
+            rejectUnauthorized: tlsRejectUnauthorized,
+        },
+    });
 }
 
 async function sendResetPasswordEmail({ to, firstName, resetLink }) {
@@ -155,8 +86,9 @@ async function sendResetPasswordEmail({ to, firstName, resetLink }) {
     const appName = "Timelyx";
     const safeName = firstName || "User";
 
-    await sendMailWithFallback({
-        from: `Timelyx <${GMAIL_USER}>`,
+    const transporter = createMailTransporter();
+    await transporter.sendMail({
+        from: GMAIL_USER,
         to,
         subject: `${appName} Password Reset`,
         text: `Hello ${safeName},\n\nUse this link to reset your password:\n${resetLink}\n\nThis link expires in ${RESET_PASSWORD_EXPIRES_MINUTES} minutes.\n\nIf you did not request this, please ignore this email.`,
@@ -201,12 +133,6 @@ async function findOrCreateOAuthUser({ provider, providerId, email, firstName, l
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-
-    const blockedByEmail = await RejectedRegistration.findOne({ emailLower: normalizedEmail }).lean();
-    if (blockedByEmail) {
-        throw new Error("This registration email was previously rejected by TO and cannot be used to request access again");
-    }
-
     let user = await User.findOne({ email: { $regex: new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i") } });
 
     if (!user) {
@@ -274,25 +200,11 @@ export async function createUser(req, res) {
         const { firstName, lastName, email, username, password, requestedRole } = req.body;
         const normalizedEmail = (email || "").trim().toLowerCase();
         const normalizedUsername = (username || "").trim();
-        const normalizedUsernameLower = normalizedUsername.toLowerCase();
 
         // 🔥 Basic validation
         if (!firstName || !normalizedEmail || !normalizedUsername || !password) {
             return res.status(400).json({
                 message: "All required fields must be filled"
-            });
-        }
-
-        const blockedIdentity = await RejectedRegistration.findOne({
-            $or: [
-                { emailLower: normalizedEmail },
-                { usernameLower: normalizedUsernameLower }
-            ]
-        }).lean();
-
-        if (blockedIdentity) {
-            return res.status(403).json({
-                message: "This email or username was previously rejected by TO and cannot be used for a new registration request"
             });
         }
 
@@ -759,12 +671,6 @@ export async function forgotPassword(req, res) {
         return res.status(200).json(response);
     } catch (error) {
         console.log("FORGOT PASSWORD ERROR:", error);
-        if (error?.message?.includes("Mail send timed out") || error?.code === "ETIMEDOUT") {
-            return res.status(503).json({
-                message: "Email service is taking too long to respond. Please try again shortly."
-            });
-        }
-
         return res.status(500).json({
             message: error.message || "Error processing forgot password request"
         });
@@ -818,12 +724,10 @@ export async function startGoogleOAuth(req, res) {
             return res.status(501).json({ message: "Google OAuth is not configured" });
         }
 
-        const frontendBaseUrl = resolveFrontendBaseUrl(req);
-        const redirectUri = resolveOAuthRedirectUri(req, "google");
-        const state = createOAuthState("google", frontendBaseUrl);
+        const state = createOAuthState("google");
         const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
         authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
-        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
         authUrl.searchParams.set("response_type", "code");
         authUrl.searchParams.set("scope", "openid email profile");
         authUrl.searchParams.set("state", state);
@@ -833,27 +737,21 @@ export async function startGoogleOAuth(req, res) {
         return res.redirect(authUrl.toString());
     } catch (error) {
         console.error("startGoogleOAuth error:", error);
-        return res.redirect(buildAuthErrorRedirect("Unable to start Google login", resolveFrontendBaseUrl(req)));
+        return res.redirect(buildAuthErrorRedirect("Unable to start Google login"));
     }
 }
 
 // ================= GOOGLE OAUTH CALLBACK =================
 export async function googleOAuthCallback(req, res) {
-    let frontendBaseUrl = resolveFrontendBaseUrl(req);
-
     try {
         const { code, state } = req.query;
         if (!code || !state) {
-            return res.redirect(buildAuthErrorRedirect("Missing Google OAuth parameters", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Missing Google OAuth parameters"));
         }
 
-        const statePayload = verifyOAuthState(state, "google");
-        if (!statePayload) {
-            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state", frontendBaseUrl));
+        if (!verifyOAuthState(state, "google")) {
+            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
         }
-
-        frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || frontendBaseUrl;
-        const redirectUri = resolveOAuthRedirectUri(req, "google");
 
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
             method: "POST",
@@ -862,19 +760,19 @@ export async function googleOAuthCallback(req, res) {
                 code: String(code),
                 client_id: GOOGLE_CLIENT_ID,
                 client_secret: GOOGLE_CLIENT_SECRET,
-                redirect_uri: redirectUri,
+                redirect_uri: GOOGLE_REDIRECT_URI,
                 grant_type: "authorization_code",
             }),
         });
 
         if (!tokenRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Google token exchange failed", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Google token exchange failed"));
         }
 
         const tokenData = await tokenRes.json();
         const accessToken = tokenData?.access_token;
         if (!accessToken) {
-            return res.redirect(buildAuthErrorRedirect("Google access token missing", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Google access token missing"));
         }
 
         const userRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
@@ -882,7 +780,7 @@ export async function googleOAuthCallback(req, res) {
         });
 
         if (!userRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Failed to fetch Google user profile", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Failed to fetch Google user profile"));
         }
 
         const profile = await userRes.json();
@@ -895,26 +793,14 @@ export async function googleOAuthCallback(req, res) {
         });
 
         if (user.role === "REJECTED") {
-            return res.redirect(buildAuthErrorRedirect("Your account request was rejected", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Your account request was rejected"));
         }
 
         const token = issueUserToken(user);
-        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
+        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username));
     } catch (error) {
         console.error("googleOAuthCallback error:", error);
-
-        // If state is still verifiable, prefer the frontend URL captured at OAuth start.
-        try {
-            const statePayload = verifyOAuthState(req.query?.state, "google");
-            const fromState = normalizeUrl(statePayload?.frontendBaseUrl);
-            if (fromState) {
-                frontendBaseUrl = fromState;
-            }
-        } catch {
-            // Keep previously resolved frontendBaseUrl fallback.
-        }
-
-        return res.redirect(buildAuthErrorRedirect("Google login failed", frontendBaseUrl));
+        return res.redirect(buildAuthErrorRedirect("Google login failed"));
     }
 }
 
@@ -925,12 +811,10 @@ export async function startMicrosoftOAuth(req, res) {
             return res.status(501).json({ message: "Microsoft OAuth is not configured" });
         }
 
-        const frontendBaseUrl = resolveFrontendBaseUrl(req);
-        const redirectUri = resolveOAuthRedirectUri(req, "microsoft");
-        const state = createOAuthState("microsoft", frontendBaseUrl);
+        const state = createOAuthState("microsoft");
         const authUrl = new URL(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/authorize`);
         authUrl.searchParams.set("client_id", MICROSOFT_CLIENT_ID);
-        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("redirect_uri", MICROSOFT_REDIRECT_URI);
         authUrl.searchParams.set("response_type", "code");
         authUrl.searchParams.set("scope", "openid profile email User.Read");
         authUrl.searchParams.set("response_mode", "query");
@@ -940,27 +824,21 @@ export async function startMicrosoftOAuth(req, res) {
         return res.redirect(authUrl.toString());
     } catch (error) {
         console.error("startMicrosoftOAuth error:", error);
-        return res.redirect(buildAuthErrorRedirect("Unable to start Microsoft login", resolveFrontendBaseUrl(req)));
+        return res.redirect(buildAuthErrorRedirect("Unable to start Microsoft login"));
     }
 }
 
 // ================= MICROSOFT OAUTH CALLBACK =================
 export async function microsoftOAuthCallback(req, res) {
-    let frontendBaseUrl = resolveFrontendBaseUrl(req);
-
     try {
         const { code, state } = req.query;
         if (!code || !state) {
-            return res.redirect(buildAuthErrorRedirect("Missing Microsoft OAuth parameters", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Missing Microsoft OAuth parameters"));
         }
 
-        const statePayload = verifyOAuthState(state, "microsoft");
-        if (!statePayload) {
-            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state", frontendBaseUrl));
+        if (!verifyOAuthState(state, "microsoft")) {
+            return res.redirect(buildAuthErrorRedirect("Invalid OAuth state"));
         }
-
-        frontendBaseUrl = normalizeUrl(statePayload.frontendBaseUrl) || frontendBaseUrl;
-        const redirectUri = resolveOAuthRedirectUri(req, "microsoft");
 
         const tokenRes = await fetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
             method: "POST",
@@ -969,19 +847,19 @@ export async function microsoftOAuthCallback(req, res) {
                 code: String(code),
                 client_id: MICROSOFT_CLIENT_ID,
                 client_secret: MICROSOFT_CLIENT_SECRET,
-                redirect_uri: redirectUri,
+                redirect_uri: MICROSOFT_REDIRECT_URI,
                 grant_type: "authorization_code",
             }),
         });
 
         if (!tokenRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Microsoft token exchange failed", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Microsoft token exchange failed"));
         }
 
         const tokenData = await tokenRes.json();
         const accessToken = tokenData?.access_token;
         if (!accessToken) {
-            return res.redirect(buildAuthErrorRedirect("Microsoft access token missing", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Microsoft access token missing"));
         }
 
         const userRes = await fetch("https://graph.microsoft.com/v1.0/me", {
@@ -989,7 +867,7 @@ export async function microsoftOAuthCallback(req, res) {
         });
 
         if (!userRes.ok) {
-            return res.redirect(buildAuthErrorRedirect("Failed to fetch Microsoft profile", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Failed to fetch Microsoft profile"));
         }
 
         const profile = await userRes.json();
@@ -1006,25 +884,13 @@ export async function microsoftOAuthCallback(req, res) {
         });
 
         if (user.role === "REJECTED") {
-            return res.redirect(buildAuthErrorRedirect("Your account request was rejected", frontendBaseUrl));
+            return res.redirect(buildAuthErrorRedirect("Your account request was rejected"));
         }
 
         const token = issueUserToken(user);
-        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username, frontendBaseUrl));
+        return res.redirect(buildAuthSuccessRedirect(token, user.role, user.username));
     } catch (error) {
         console.error("microsoftOAuthCallback error:", error);
-
-        // If state is still verifiable, prefer the frontend URL captured at OAuth start.
-        try {
-            const statePayload = verifyOAuthState(req.query?.state, "microsoft");
-            const fromState = normalizeUrl(statePayload?.frontendBaseUrl);
-            if (fromState) {
-                frontendBaseUrl = fromState;
-            }
-        } catch {
-            // Keep previously resolved frontendBaseUrl fallback.
-        }
-
-        return res.redirect(buildAuthErrorRedirect("Microsoft login failed", frontendBaseUrl));
+        return res.redirect(buildAuthErrorRedirect("Microsoft login failed"));
     }
 }
