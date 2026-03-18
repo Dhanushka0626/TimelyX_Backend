@@ -2,54 +2,38 @@ services:
   - type: web
     name: timelyx-backend
     runtime: node
-    plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: MONGODB_URI
-        fromDatabase:
-          name: timelyx-db
-          property: connectionString
-      - key: MONGODB_URI_FALLBACK
-        value: mongodb://127.0.0.1:27017/timelyx
+        sync: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: FRONTEND_BASE_URL
+        value: https://timely-x-frontend.vercel.app
+      - key: CORS_ALLOWED_ORIGINS
         value: https://timely-x-frontend.vercel.app
       - key: RESET_PASSWORD_EXPIRES_MINUTES
         value: "15"
       - key: GOOGLE_CLIENT_ID
-        value: 289781738431-5c6bb463ov3lg6prv9sgjrs3jg1upief.apps.googleusercontent.com
+        sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_REDIRECT_URI
-        value: https://timelyx-backend-1.onrender.com/users/oauth/google/callback
+        sync: false
       - key: MICROSOFT_CLIENT_ID
-        value: 3eb86cf5-9f28-4515-b911-a751a90a3ebc
+        sync: false
       - key: MICROSOFT_CLIENT_SECRET
         sync: false
       - key: MICROSOFT_TENANT_ID
-        value: common
+        sync: false
       - key: MICROSOFT_REDIRECT_URI
-        value: https://timelyx-backend-1.onrender.com/users/oauth/microsoft/callback
+        sync: false
       - key: GMAIL_USER
-        value: supporttimelyx@gmail.com
+        sync: false
       - key: GMAIL_PASSWORD
         sync: false
       - key: CONTACT_RECEIVER_EMAIL
-        value: supporttimelyx@gmail.com
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_SECURE
-        value: "false"
-      - key: MAIL_SEND_TIMEOUT_MS
-        value: "45000"
-
-databases:
-  - name: timelyx-db
-    databaseName: timelyx
-    user: timelyx_user
+        sync: false

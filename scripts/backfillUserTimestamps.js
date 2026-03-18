@@ -4,49 +4,22 @@ import { MONGODB_URI } from '../config.js';
 
 (async () => {
     try {
-        await mongoose.connect(MONGODB_URI);
+        await mongoose.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
         console.log('Connected to MongoDB for timestamp backfill');
 
-        const users = await User.find(
-            {
-                $or: [
-                    { updatedAt: { $exists: false } },
-                    { createdAt: { $exists: false } },
-                ],
-            },
-            { _id: 1, createdAt: 1, updatedAt: 1 }
-        ).lean();
+        const users = await User.find({ $or: [{ updatedAt: { $exists: false } }, { createdAt: { $exists: false } }] });
         console.log(`Found ${users.length} users needing timestamps`);
 
-        const now = new Date();
-        const operations = [];
-
         for (const u of users) {
-            const nextUpdatedAt = u.updatedAt || u.createdAt || now;
-            const nextCreatedAt = u.createdAt || u.updatedAt || now;
-
-            operations.push({
-                updateOne: {
-                    filter: { _id: u._id },
-                    update: {
-                        $set: {
-                            updatedAt: nextUpdatedAt,
-                            createdAt: nextCreatedAt,
-                        },
-                    },
-                },
-            });
-        }
-
-        if (operations.length > 0) {
-            await User.bulkWrite(operations);
+            u.updatedAt = u.updatedAt || u.createdAt || new Date();
+            u.createdAt = u.createdAt || u.updatedAt || new Date();
+            await u.save();
         }
 
         console.log('Backfill complete');
+        process.exit(0);
     } catch (err) {
         console.error('Backfill error', err);
-        process.exitCode = 1;
-    } finally {
-        await mongoose.disconnect();
+        process.exit(1);
     }
 })();
