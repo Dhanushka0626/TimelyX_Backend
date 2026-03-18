@@ -1,21 +1,35 @@
 import nodemailer from "nodemailer";
 import { GMAIL_PASSWORD, GMAIL_USER } from "../config.js";
 
+function getEnvValue(key, fallback = "") {
+    if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+        return String(process.env[key] ?? "").trim();
+    }
+
+    for (const [envKey, envValue] of Object.entries(process.env)) {
+        if (String(envKey).trim() === key) {
+            return String(envValue ?? "").trim();
+        }
+    }
+
+    return String(fallback ?? "").trim();
+}
+
 function parseBoolean(value, fallback = false) {
     if (value === undefined || value === null || value === "") {
         return fallback;
     }
 
-    return String(value).toLowerCase() === "true";
+    return String(value).trim().toLowerCase() === "true";
 }
 
 export function buildMailTransportOptions() {
-    const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
-    const smtpSecure = parseBoolean(process.env.SMTP_SECURE, false);
-    const smtpPort = Number(process.env.SMTP_PORT || (smtpSecure ? 465 : 587));
-    const isProduction = String(process.env.NODE_ENV || "development") === "production";
+    const smtpHost = getEnvValue("SMTP_HOST", "smtp.gmail.com") || "smtp.gmail.com";
+    const smtpSecure = parseBoolean(getEnvValue("SMTP_SECURE", ""), false);
+    const smtpPort = Number(getEnvValue("SMTP_PORT", smtpSecure ? 465 : 587) || (smtpSecure ? 465 : 587));
+    const isProduction = getEnvValue("NODE_ENV", "development") === "production";
     const tlsRejectUnauthorized = parseBoolean(
-        process.env.SMTP_TLS_REJECT_UNAUTHORIZED,
+        getEnvValue("SMTP_TLS_REJECT_UNAUTHORIZED", ""),
         isProduction
     );
 
@@ -28,10 +42,10 @@ export function buildMailTransportOptions() {
             user: GMAIL_USER,
             pass: GMAIL_PASSWORD,
         },
-        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
-        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
-        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
-        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+        connectionTimeout: Number(getEnvValue("SMTP_CONNECTION_TIMEOUT", 10000) || 10000),
+        greetingTimeout: Number(getEnvValue("SMTP_GREETING_TIMEOUT", 10000) || 10000),
+        socketTimeout: Number(getEnvValue("SMTP_SOCKET_TIMEOUT", 20000) || 20000),
+        dnsTimeout: Number(getEnvValue("SMTP_DNS_TIMEOUT", 10000) || 10000),
         tls: {
             rejectUnauthorized: tlsRejectUnauthorized,
         },
@@ -39,7 +53,7 @@ export function buildMailTransportOptions() {
 }
 
 export async function sendMailWithTimeout(transporter, mailOptions) {
-    const timeoutMs = Number(process.env.MAIL_SEND_TIMEOUT_MS || 20000);
+    const timeoutMs = Number(getEnvValue("MAIL_SEND_TIMEOUT_MS", 20000) || 20000);
 
     return await Promise.race([
         transporter.sendMail(mailOptions),
@@ -51,7 +65,7 @@ export async function sendMailWithTimeout(transporter, mailOptions) {
 
 function buildTransportCandidates() {
     const candidates = [];
-    const smtpHost = process.env.SMTP_HOST;
+    const smtpHost = getEnvValue("SMTP_HOST", "");
     const smtpUser = GMAIL_USER;
     const smtpPass = GMAIL_PASSWORD;
 
@@ -70,10 +84,10 @@ function buildTransportCandidates() {
             user: smtpUser,
             pass: smtpPass,
         },
-        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
-        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
-        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
-        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+        connectionTimeout: Number(getEnvValue("SMTP_CONNECTION_TIMEOUT", 10000) || 10000),
+        greetingTimeout: Number(getEnvValue("SMTP_GREETING_TIMEOUT", 10000) || 10000),
+        socketTimeout: Number(getEnvValue("SMTP_SOCKET_TIMEOUT", 20000) || 20000),
+        dnsTimeout: Number(getEnvValue("SMTP_DNS_TIMEOUT", 10000) || 10000),
     });
 
     // Explicit SSL strategy.
@@ -85,10 +99,10 @@ function buildTransportCandidates() {
             user: smtpUser,
             pass: smtpPass,
         },
-        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
-        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
-        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
-        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+        connectionTimeout: Number(getEnvValue("SMTP_CONNECTION_TIMEOUT", 10000) || 10000),
+        greetingTimeout: Number(getEnvValue("SMTP_GREETING_TIMEOUT", 10000) || 10000),
+        socketTimeout: Number(getEnvValue("SMTP_SOCKET_TIMEOUT", 20000) || 20000),
+        dnsTimeout: Number(getEnvValue("SMTP_DNS_TIMEOUT", 10000) || 10000),
     });
 
     // Explicit STARTTLS strategy.
@@ -101,10 +115,10 @@ function buildTransportCandidates() {
             user: smtpUser,
             pass: smtpPass,
         },
-        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT || 10000),
-        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT || 10000),
-        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT || 20000),
-        dnsTimeout: Number(process.env.SMTP_DNS_TIMEOUT || 10000),
+        connectionTimeout: Number(getEnvValue("SMTP_CONNECTION_TIMEOUT", 10000) || 10000),
+        greetingTimeout: Number(getEnvValue("SMTP_GREETING_TIMEOUT", 10000) || 10000),
+        socketTimeout: Number(getEnvValue("SMTP_SOCKET_TIMEOUT", 20000) || 20000),
+        dnsTimeout: Number(getEnvValue("SMTP_DNS_TIMEOUT", 10000) || 10000),
     });
 
     return candidates;
