@@ -38,6 +38,16 @@ services:
         value: supporttimelyx@gmail.com
       - key: GMAIL_PASSWORD
         sync: false
+      - key: CONTACT_RECEIVER_EMAIL
+        value: supporttimelyx@gmail.com
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_SECURE
+        value: "true"
+      - key: MAIL_SEND_TIMEOUT_MS
+        value: "20000"
 
 databases:
   - name: timelyx-db

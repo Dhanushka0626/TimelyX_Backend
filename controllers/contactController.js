@@ -1,54 +1,9 @@
-import nodemailer from "nodemailer";
-import { CONTACT_RECEIVER_EMAIL, GMAIL_USER, GMAIL_PASSWORD } from "../config.js";
-
-function createTransporter() {
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpPort = Number(process.env.SMTP_PORT || 587);
-  const smtpSecure = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-  const isProduction = String(process.env.NODE_ENV || "development") === "production";
-  const tlsRejectUnauthorized = String(
-    process.env.SMTP_TLS_REJECT_UNAUTHORIZED || (isProduction ? "true" : "false")
-  ).toLowerCase() === "true";
-
-  // If custom SMTP details are provided, prefer them. Otherwise fallback to Gmail service.
-  if (smtpHost) {
-    return nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
-      auth: {
-        user: GMAIL_USER,
-        pass: GMAIL_PASSWORD,
-      },
-      tls: {
-        rejectUnauthorized: tlsRejectUnauthorized,
-      },
-    });
-  }
-
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: GMAIL_USER,
-      pass: GMAIL_PASSWORD,
-    },
-    tls: {
-      rejectUnauthorized: tlsRejectUnauthorized,
-    },
-  });
-}
+import { CONTACT_RECEIVER_EMAIL } from "../config.js";
+import { getMailFromAddress, sendMail } from "../utils/mailer.js";
 
 // Send contact message email
 async function sendMessage(req, res) {
   try {
-    // Validate that email credentials are configured
-    if (!GMAIL_USER || !GMAIL_PASSWORD || GMAIL_PASSWORD === "your-app-specific-password-here") {
-      console.error("Email credentials not configured properly");
-      return res.status(500).json({
-        message: "Email service is not properly configured. Please contact the administrator.",
-      });
-    }
-
     const { name, email, message } = req.body;
 
     // Validate input
@@ -58,7 +13,7 @@ async function sendMessage(req, res) {
 
     // Email content
     const mailOptions = {
-      from: GMAIL_USER,
+      from: getMailFromAddress(),
       to: CONTACT_RECEIVER_EMAIL,
       subject: `New Contact Message from ${name}`,
       html: `
@@ -79,9 +34,7 @@ async function sendMessage(req, res) {
       replyTo: email,
     };
 
-    // Send email
-    const transporter = createTransporter();
-    await transporter.sendMail(mailOptions);
+    await sendMail(mailOptions);
 
     return res.status(200).json({
       message: "Message sent successfully",
@@ -92,7 +45,13 @@ async function sendMessage(req, res) {
 
     if (error?.code === "EAUTH") {
       return res.status(500).json({
-        message: "Email authentication failed. Check your mail app password in backend/.env.",
+        message: "Email authentication failed. Verify GMAIL_USER and GMAIL_PASSWORD in Render environment variables.",
+      });
+    }
+
+    if (error?.code === "ETIMEDOUT" || error?.code === "ESOCKET") {
+      return res.status(500).json({
+        message: "Email server timed out. Verify SMTP_HOST/SMTP_PORT/SMTP_SECURE and try again.",
       });
     }
 
